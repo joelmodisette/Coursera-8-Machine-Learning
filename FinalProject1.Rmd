@@ -1,0 +1,249 @@
+---
+title: "Coursera Machine Learning Course Project"
+author: "Joel Modisette"
+date: "8/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+### Data Sources
+
+The data consists of a Training data and a Test data (to be used to validate the selected model). This data sets may be found here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+
+The source for this data project is:
+
+<http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har>
+
+### Goal
+
+The goal of this project is to predict the manner in which they did the exercise. This is the “classe” variable in the training set. 
+
+## Libraries and Data Loading
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(caret); library(corrplot); library(dplyr); library(randomForest); library(rpart); library(rattle)
+
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+train_file <- "pml-training.csv"
+test_file <- "pml-testing.csv"
+
+if(!file.exists(train_file)){
+  download.file(train_url, train_file)
+}
+if(!file.exists(test_file)){
+  download.file(test_url, test_file)
+}
+train <- read.csv(train_file, na.strings = c("NA", ""), stringsAsFactors = FALSE)
+test <- read.csv(test_file, na.strings = c("NA", ""), stringsAsFactors = FALSE)
+```
+
+## Data Pre-processing
+
+Remove columns with missing data or data unrelated to the objective "classe" variable in the training set. Make the "classe" variable a factor variable.
+
+
+```{r data pp, message=FALSE, warning=FALSE}
+#remove cols with all NA, timestamp, window, user, or X
+train <- train[colSums(is.na(train)) == 0]
+test <- test[colSums(is.na(test)) == 0]
+
+train <- select(train, 
+                -contains("timestamp"), -contains("window"), -contains("user"), -X)
+test <- select(test, 
+               -contains("timestamp"), -contains("window"), -contains("user"), -X)
+```
+
+Determine the values for "classe"
+
+```{r table, message=FALSE, warning=FALSE}
+table(train$classe)
+```
+
+Convert the objective variable into a factor variable.
+
+```{r classe, message=FALSE, warning=FALSE}
+train$classe <- as.factor(train$classe)
+```
+
+
+## Split Training Data
+
+Creating training and test partitions within the training data give me the flexibility to build and compare. Use a 70-30 percent split. 
+
+```{r splitter, echo=FALSE, warning=FALSE}
+set.seed(1234) 
+inTrain <- createDataPartition(train$classe, p = 0.7, list = FALSE)
+trainData <- train[inTrain, ]
+testData <- train[-inTrain, ]
+print("Training Data Dimension")
+dim(trainData)
+print("Validation(pre-Test) Data Dimension")
+dim(testData)
+```
+
+### Determine the highest correlated variables with a threshold of r = 0.8
+
+Currently have 52 predictor variables and one outcome "classe" factor variable.
+
+```{r corr, echo=FALSE}
+cor_mat <- cor(train[, -53])
+corrplot(cor_mat, order = "FPC", method = "color", type = "upper", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+
+```
+
+### Candidates for future study for data compression
+
+No data compression was performed. The following variables would likely expected to contain most of the variability. 
+
+```{r highcorr2}
+
+highcorr = findCorrelation(cor_mat, cutoff=0.8)
+print(names(train)[highcorr])
+```
+
+## Build and Test Models
+
+Use Classification Tree, Random Forests and Generalized Boosted Model.
+
+### Classification Tree
+
+Create the model using the training data, then plot the classification tree.
+
+```{r classtree, warning=FALSE}
+set.seed(11111)
+DT_Model <- rpart(classe ~ ., data=trainData, method="class")
+rattle::fancyRpartPlot(DT_Model, main = "Decision Tree")
+```
+
+Validate the Decision Tree Model on the newly created test data partition of our training data.
+
+
+```{r cmclasstree, }
+predictDT_Model <- predict(DT_Model, testData, type = "class")
+cmDT <- confusionMatrix(predictDT_Model, testData$classe)
+cmDT
+
+
+```
+
+Plot the matrix of the results of the Decision Tree.
+
+```{r treematrix, }
+plot(cmDT$table, col - cmDT$byClass, 
+     main = paste("Decision Tree - Accuracy =", round(cmDT$overall['Accuracy'],4)))
+
+```
+
+The accuracy rate of the Decision Tree is 0.7541.
+
+## Random Forest
+
+Create the Random Forest model using the training data.
+
+```{r rf}
+
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+RF_model <- train(classe ~ ., data=trainData, method="rf", trControl=controlRF)
+RF_model$finalModel
+
+```
+
+Validate the Random Forest model on our validation (test) data. 
+
+```{r rf2 }
+predictRF1 <- predict(RF_model, newdata=testData)
+cmrf <- confusionMatrix(predictRF1, testData$classe)
+cmrf
+```
+
+The accuracy rate of the Random Forest is 0.9944. Explore the possibility of overfitting.
+
+```{r rf3 }
+plot(RF_model)
+```
+
+
+Plot the matrix of the results of the Random Forest.
+
+```{r rf4 }
+plot(cmrf$table, col = cmrf$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(cmrf$overall['Accuracy'], 4)))
+```
+
+## Generalized Boosted Regression Model
+
+Create the Generalized Boosted Regression model using the training data.
+
+```{r gbm1 }
+set.seed(55555)
+controlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+GBM_model  <- train(classe ~ ., data=trainData, method = "gbm", trControl = controlGBM, verbose = FALSE)
+GBM_model$finalModel
+
+```
+
+
+
+```{r gbm2 }
+print(GBM_model)
+
+```
+
+
+Validate the GBM on the test data. 
+
+```{r gbm3 }
+predictGBM <- predict(GBM_model, newdata=testData)
+cmGBM <- confusionMatrix(predictGBM, testData$classe)
+cmGBM
+
+```
+
+The accuracy rate of the GBM is 0.9679. 
+
+## Selection of best model using validation data
+
+Compare the three models:
+
+| Model | Accuracy |
+|-------|----------|
+|Decision Tree|0.7541|
+|Random Forest|0.9944|
+|GBM | 0.9679 |
+
+The Random Forest has the highest accuracy. Further study should involve parametric reduction and re-comparison of the methods. Choose the Random Forest to provide results for submission using the 20 row test data.
+
+## Results using test data
+
+```{r results }
+Results <- predict(RF_model, newdata=test)
+Results
+
+```
+
+
+
+
+
+
+
+
+
+
+
+o
